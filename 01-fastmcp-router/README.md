@@ -113,19 +113,234 @@
 
 > ✈️ **공항 비유: 레고처럼 조합하기**
 >
-> 3가지 프리미티브(승객, 항공사, 검색대)를 **어떻게 조합하느냐**에 따라 전혀 다른 공항이 만들어진다:
->
-> | 조합 | 결과 (패턴) | 공항 비유 |
-> |------|-------------|-----------|
-> | ProxyProvider 1개 | **프록시** | 경유 공항 — A공항 승객을 B공항으로 중계 |
-> | ProxyProvider 여러 개 + Visibility Transform | **게이트웨이** | 출입국심사대가 있는 허브 공항 — 모든 노선이 하나의 검문소를 통과 |
-> | FastMCPProvider 여러 개 + Namespace Transform | **애그리게이터** | 스카이스캐너 — 항공사 10개를 하나의 검색창에서 통합 |
-> | Namespace Transform (접두사 기반) | **라우터** | 탑승구 구역제 — A구역=국내, B구역=국제, 번호가 곧 경로 |
-> | enable/disable + 라이브 마운팅 | **동적 등록** | 등급별 라운지 — 이코노미→비즈니스 업그레이드 시 새 서비스 해금 |
->
-> **핵심 통찰**: v2에서는 프록시, 게이트웨이, 라우터가 각각 **별도 코드**였지만,
+> 3가지 인프라(승객, 항공사, 검색대)를 **어떻게 조합하느냐**에 따라 전혀 다른 공항이 만들어진다.
+> v2에서는 프록시, 게이트웨이, 라우터가 각각 **별도 코드**였지만,
 > v3에서는 **같은 3가지 블록의 조합**으로 전부 만든다.
-> 레고로 집도, 차도, 비행기도 만들 수 있는 것처럼.
+
+#### 조합 1️⃣ ProxyProvider → 경유 공항 (프록시)
+
+> ✈️ 인천→파리 직항이 없으면, **두바이 경유**. 승객은 결국 파리에 도착하지만 중간에 공항 하나를 거친다.
+
+```python
+from fastmcp.server import create_proxy
+
+# "두바이 경유 공항" = 프록시 서버
+# 원격 HTTP 서버를 로컬 stdio로 중계
+proxy = create_proxy("http://remote-server:8080/mcp", name="경유공항")
+proxy.run()  # Claude Desktop(stdio) ↔ Proxy ↔ 원격 서버(HTTP)
+```
+
+```
+승객(Client)  ──stdio──▶  두바이(Proxy)  ──HTTP──▶  파리(원격 서버)
+```
+
+#### 조합 2️⃣ ProxyProvider 여러 개 + Visibility → 허브 공항 (게이트웨이)
+
+> ✈️ 인천공항 출입국심사대. 대한항공이든 아시아나든 **모든 승객이 여기를 거친다**.
+> 여권 확인(인증), 입국 기록(로깅), 입국 거부(정책)가 한 곳에서 처리.
+
+```python
+from fastmcp import FastMCP
+from fastmcp.server import create_proxy
+
+# "인천공항" = 게이트웨이 서버
+gateway = FastMCP("인천공항")
+
+# 각 항공사(원격 서비스)를 마운트
+gateway.mount(create_proxy("http://weather-api/mcp"), namespace="weather")
+gateway.mount(create_proxy("http://db-api/mcp"), namespace="db")
+gateway.mount(create_proxy("http://git-api/mcp"), namespace="git")
+
+# 출입국심사 = Visibility Transform
+# 내부용(직원 전용) 도구는 숨기기
+gateway.disable(tags={"internal"})
+
+# 또는 공개 도구만 허용 (화이트리스트)
+gateway.enable(tags={"public"}, only=True)
+
+gateway.run(transport="http", host="0.0.0.0", port=8080)
+```
+
+```
+                        🛂 출입국심사 (Visibility)
+                        │
+승객(Client) ──▶ 인천공항(Gateway) ──▶ 대한항공(weather-api)
+                        │           ──▶ 아시아나(db-api)
+                        │           ──▶ 에미레이트(git-api)
+```
+
+#### 조합 3️⃣ FastMCPProvider 여러 개 + Namespace → 스카이스캐너 (애그리게이터)
+
+> ✈️ 항공사 사이트를 10개씩 들어갈 필요 없이, **스카이스캐너 하나**로 전부 검색.
+> 각 항공사의 노선이 `대한항공_인천파리`, `아시아나_인천도쿄`처럼 접두사로 구분된다.
+
+```python
+from fastmcp import FastMCP
+
+# 개별 항공사 서버 (각각 독립적으로 존재)
+weather_server = FastMCP("날씨 서비스")
+@weather_server.tool
+def get_forecast(city: str) -> str:
+    """도시별 날씨 예보"""
+    return f"{city}: 맑음, 23°C"
+
+@weather_server.tool
+def get_alerts(region: str) -> str:
+    """기상 특보 조회"""
+    return f"{region}: 특보 없음"
+
+db_server = FastMCP("DB 서비스")
+@db_server.tool
+def query(sql: str) -> str:
+    """SQL 쿼리 실행"""
+    return f"결과: {sql}"
+
+@db_server.tool
+def tables() -> list[str]:
+    """테이블 목록"""
+    return ["users", "orders", "products"]
+
+file_server = FastMCP("파일 서비스")
+@file_server.tool
+def read_file(path: str) -> str:
+    """파일 읽기"""
+    return f"내용: {path}"
+
+# 스카이스캐너 = 애그리게이터 서버
+aggregator = FastMCP("통합 서버")
+aggregator.mount(weather_server, namespace="weather")  # weather_get_forecast, weather_get_alerts
+aggregator.mount(db_server, namespace="db")            # db_query, db_tables
+aggregator.mount(file_server, namespace="fs")          # fs_read_file
+
+aggregator.run()
+
+# 클라이언트는 aggregator 하나만 연결하면 6개 도구 모두 사용 가능!
+# 기존: 서버 3개 × 개별 연결 = 설정 3개
+# 지금: 서버 1개 연결 = 설정 1개
+```
+
+```
+기존: Client ──▶ 날씨서버     도구명: get_forecast, get_alerts
+      Client ──▶ DB서버       도구명: query, tables
+      Client ──▶ 파일서버     도구명: read_file
+      (설정 3개, 도구명 충돌 위험)
+
+통합: Client ──▶ 애그리게이터  도구명: weather_get_forecast, weather_get_alerts,
+                               db_query, db_tables, fs_read_file
+      (설정 1개, namespace로 충돌 방지)
+```
+
+#### 조합 4️⃣ mount() + Namespace → 탑승구 구역제 (라우터)
+
+> ✈️ 탑승권에 `B12`라고 적혀있으면 자동으로 B구역으로 이동.
+> **접두사가 곧 라우팅** — 별도 안내원(라우팅 로직) 필요 없음.
+
+```python
+from fastmcp import FastMCP
+
+main = FastMCP("공항 메인")
+
+# A구역 = 국내선 (sp 서버)
+main.mount(sp_server, namespace="sp")       # sp_text2sql, sp_rag_search, sp_db_query
+
+# B구역 = 일본/중국 (task 서버)  
+main.mount(task_server, namespace="task")   # task_node_lookup, task_exec
+
+# C구역 = 유럽/미주 (disc 서버)
+main.mount(disc_server, namespace="disc")   # disc_collect, disc_mapping
+
+# D구역 = 스케줄러
+main.mount(sched_server, namespace="sched") # sched_create, sched_list
+
+# 클라이언트가 "sp_text2sql" 호출 → 자동으로 sp_server로 라우팅
+# 클라이언트가 "task_exec" 호출 → 자동으로 task_server로 라우팅
+# 라우팅 코드가 별도로 없다! namespace 접두사 자체가 라우팅.
+```
+
+```
+Client: "sp_text2sql 호출해줘"
+   │
+   ▼
+Main Server: "sp_" 접두사 → A구역(sp_server)으로 자동 전달
+   │
+   ▼
+sp_server: text2sql 실행 → 결과 반환
+```
+
+#### 조합 5️⃣ enable/disable + 라이브 마운팅 → 등급별 라운지 (동적 등록)
+
+> ✈️ 일반 탑승권 = 대합실만. 비즈니스 업그레이드 = 라운지 해금. 퍼스트 = 전용 게이트 오픈.
+> 처음부터 전부 보여주면 복잡하니까, **등급에 따라 점진적으로 공개**.
+
+```python
+from fastmcp import FastMCP
+
+# 모든 서비스를 가진 서버
+services = FastMCP("공항 서비스")
+
+@services.tool(tags={"economy"})        # 이코노미 = 기본
+def flight_status(flight_no: str) -> str:
+    """항공편 상태 조회"""
+    return f"{flight_no}: 정시 출발"
+
+@services.tool(tags={"economy"})
+def gate_info(flight_no: str) -> str:
+    """탑승구 안내"""
+    return f"{flight_no}: B12 게이트"
+
+@services.tool(tags={"business"})       # 비즈니스 = 업그레이드 후 해금
+def lounge_access(terminal: str) -> str:
+    """라운지 위치 안내"""
+    return f"{terminal} 라운지: 3층 동편"
+
+@services.tool(tags={"business"})
+def priority_boarding(flight_no: str) -> str:
+    """우선 탑승 안내"""
+    return f"{flight_no}: 우선 탑승 가능"
+
+@services.tool(tags={"first"})          # 퍼스트 = 최고 등급
+def limousine_service(destination: str) -> str:
+    """리무진 서비스 예약"""
+    return f"{destination}행 리무진 예약 완료"
+
+# === 초기 상태: 이코노미 승객 ===
+app = FastMCP("Progressive Airport")
+app.mount(services)
+app.enable(tags={"economy"}, only=True)
+# 보이는 도구: flight_status, gate_info (2개)
+
+# === 비즈니스 업그레이드 후 ===
+app.enable(tags={"economy", "business"}, only=True)
+# 보이는 도구: flight_status, gate_info, lounge_access, priority_boarding (4개)
+# → notifications/tools/list_changed 알림 → 클라이언트가 새 도구 목록 갱신
+
+# === 퍼스트 클래스 ===
+app.enable(tags={"economy", "business", "first"}, only=True)
+# 보이는 도구: 전체 5개
+```
+
+```
+시간 흐름 →
+
+[이코노미]  flight_status, gate_info                    (2개)
+    │
+    ▼  업그레이드!
+[비즈니스]  + lounge_access, priority_boarding          (4개)
+    │        ↑ list_changed 알림 → 클라이언트 갱신
+    ▼  업그레이드!
+[퍼스트]    + limousine_service                         (5개)
+             ↑ list_changed 알림 → 클라이언트 갱신
+```
+
+#### 🧩 조합 요약
+
+| 사용한 프리미티브 | 만들어지는 패턴 | 공항 비유 | 핵심 코드 |
+|------------------|----------------|-----------|-----------|
+| `ProxyProvider` 1개 | 프록시 | 경유 공항 | `create_proxy(url)` |
+| `ProxyProvider` N개 + `Visibility` | 게이트웨이 | 출입국심사 허브 | `mount(create_proxy()) + disable()` |
+| `FastMCPProvider` N개 + `Namespace` | 애그리게이터 | 스카이스캐너 | `mount(server, namespace=)` |
+| `Namespace` 접두사 | 라우터 | 탑승구 구역제 | `mount(server, namespace=)` |
+| `enable/disable` + 라이브 마운팅 | 동적 등록 | 등급별 라운지 | `enable(tags=, only=True)` |
 
 ### 2단계 Transform 시스템
 
@@ -153,433 +368,56 @@
 
 ---
 
-## 3. 5가지 라우팅/아키텍처 패턴
+## 3. 5가지 패턴 요약
 
-### 패턴 1: 프록시 패턴 — 트랜스포트 브리징
+> 조합 예제는 위 섹션 2에서 코드와 함께 상세히 다뤘습니다.
+> 여기서는 각 패턴의 핵심만 정리합니다.
 
-> ✈️ **공항 비유**: **경유편**. 인천→파리 직항이 없으면, 인천→두바이(Proxy)→파리로 환승. 승객 입장에서는 결국 파리에 도착하지만, 중간에 두바이 공항을 한 번 거친다. 트랜스포트가 다른 두 지점을 연결해주는 중계 공항.
+| # | 패턴 | 한 줄 요약 | 공항 비유 |
+|---|------|-----------|-----------|
+| 1 | **프록시** | 트랜스포트가 다른 두 지점을 중계 | ✈️ 경유편 (인천→두바이→파리) |
+| 2 | **게이트웨이** | 모든 요청이 거치는 보안/정책 진입점 | 🛂 출입국심사대 |
+| 3 | **애그리게이터** | N개 서버를 1개 엔드포인트로 통합 | 🔍 스카이스캐너 |
+| 4 | **라우터** | 네임스페이스 접두사가 곧 라우팅 | 🚪 탑승구 구역제 |
+| 5 | **동적 등록** | 런타임에 도구를 점진적으로 공개 | 🎫 등급별 라운지 |
 
-> 단일 백엔드 서버를 다른 트랜스포트로 노출
-
-```
-┌──────────┐  stdio   ┌───────────┐  HTTP/SSE  ┌──────────────┐
-│  Claude   │────────▶│   Proxy   │──────────▶│  원격 MCP     │
-│  Desktop  │◀────────│  Server   │◀──────────│  Server       │
-└──────────┘          └───────────┘            └──────────────┘
-```
-
-**핵심 API**: `create_proxy()`
-
-```python
-from fastmcp.server import create_proxy
-
-# HTTP → stdio 브리징 (Claude Desktop이 원격 서버 사용)
-proxy = create_proxy("http://example.com/mcp/sse", name="HTTP-to-stdio")
-proxy.run()  # 기본: stdio
-
-# stdio → HTTP 브리징 (로컬 서버를 네트워크에 노출)
-proxy = create_proxy("./my_server.py", name="stdio-to-HTTP")
-proxy.run(transport="http", host="0.0.0.0", port=8080)
-
-# NPM 패키지 프록시
-from fastmcp.client.transports import NpxStdioTransport
-proxy = create_proxy(NpxStdioTransport(package="@modelcontextprotocol/server-github"))
-```
-
-| 장점 | 단점 |
-|------|------|
-| 투명한 트랜스포트 변환 | 지연 시간 증가 (300-500ms) |
-| 클라이언트 변경 불필요 | 단일 백엔드만 지원 |
-| MCP 기능 자동 포워딩 | 세션 격리로 상태 공유 불가 |
-
-**적합한 상황**: Claude Desktop ↔ 원격 HTTP 서버 연결, 트랜스포트 불일치 해결
-
-→ 예제: [`examples/01_proxy_pattern.py`](examples/01_proxy_pattern.py)
+→ 각 패턴별 상세 예제 코드: `examples/01~05_*.py`
 
 ---
 
-### 패턴 2: 게이트웨이 패턴 — 보안/정책 단일 진입점
+## 4. 참고: 비교표 & Transform 상세
 
-> ✈️ **공항 비유**: **출입국심사대**. 어떤 항공사를 타든, 어떤 나라에서 왔든, **모든 승객이 반드시 거치는 단일 검문소**. 여권 확인(인증), 입국 기록(로깅), 입국 거부(정책) — 횡단 관심사가 한 곳에 집중된다.
+> 💡 이 섹션은 레퍼런스용입니다. 발표 시에는 필요한 부분만 참조하세요.
 
-> 여러 백엔드 서버 앞에 인증·로깅·정책을 적용하는 단일 진입점
+### 패턴별 비교
 
-```
-                          ┌──────────────┐
-                     ┌───▶│ Service A    │
-┌──────────┐        │    └──────────────┘
-│  Client   │  HTTP  │    ┌──────────────┐
-│  (LLM)   │──────▶ Gateway ──▶│ Service B    │
-└──────────┘        │    └──────────────┘
-                     │    ┌──────────────┐
-    [인증/로깅/      └───▶│ Service C    │
-     속도제한]            └──────────────┘
-```
+| 패턴 | FastMCP API | 장점 | 단점 |
+|------|-------------|------|------|
+| **프록시** | `create_proxy()` | 트랜스포트 브리징 | 지연 300-500ms |
+| **게이트웨이** | `mount()` + `disable()` | 횡단 관심사 중앙 집중 | 단일 장애점 |
+| **애그리게이터** | `mount(server, namespace=)` | 클라이언트 설정 단순화 | 최저 성능에 종속 |
+| **라우터** | `namespace` 접두사 | 코드 없이 라우팅 | 네임스페이스 설계 중요 |
+| **동적 등록** | `enable/disable` + 라이브 | 컨텍스트 윈도우 절약 | 클라이언트 지원 격차 |
 
-**핵심 API**: `mount()` + `create_proxy()` + `enable()`/`disable()`
-
-```python
-from fastmcp import FastMCP
-from fastmcp.server import create_proxy
-
-gateway = FastMCP("MCP Gateway")
-
-# 백엔드 서비스 마운트
-gateway.mount(create_proxy("http://service-a/mcp"), namespace="svc_a")
-gateway.mount(create_proxy("http://service-b/mcp"), namespace="svc_b")
-
-# 로컬 헬스체크
-@gateway.tool
-def gateway_health() -> str:
-    return "Gateway is operational"
-
-# 가시성 제어: 내부 도구 숨기기
-gateway.disable(tags={"internal"})
-# 또는 화이트리스트: 공개 도구만 노출
-gateway.enable(tags={"public"}, only=True)
-
-gateway.run(transport="http", host="0.0.0.0", port=8080)
-```
-
-| 장점 | 단점 |
-|------|------|
-| 횡단 관심사 중앙 집중 | 단일 장애점 리스크 |
-| 접근 제어 통합 관리 | 게이트웨이 자체의 성능 부담 |
-| 모니터링/로깅 일원화 | 설정 복잡도 증가 |
-
-**적합한 상황**: 프로덕션 다중 서비스 운영, 보안 정책 적용 필요
-
-**실제 사례**: LiteLLM Proxy (Key/Team 기반 접근 제어), MetaMCP
-
-→ 예제: [`examples/02_gateway_pattern.py`](examples/02_gateway_pattern.py)
-
----
-
-### 패턴 3: 애그리게이터 패턴 — N-to-1 통합
-
-> ✈️ **공항 비유**: **스카이스캐너(항공권 통합 검색)**. 대한항공, 아시아나, 에미레이트... 항공사 사이트를 하나하나 들어갈 필요 없이, **스카이스캐너 하나로 모든 항공사의 노선을 한 번에 검색·예약**한다. 클라이언트는 하나만 연결하면 모든 서비스에 접근.
-
-> 여러 MCP 서버를 단일 엔드포인트로 통합
-
-```
-                     ┌──────────────┐
-                ┌───▶│ Weather      │  (FastMCPProvider)
-┌──────────┐   │    └──────────────┘
-│  Client   │──▶ Aggregator        ┌──────────────┐
-│  (단일    │   │    Server   ┌───▶│ Remote API   │  (ProxyProvider)
-│   연결)   │   │             │    └──────────────┘
-└──────────┘   │             │    ┌──────────────┐
-                └─────────────┴───▶│ ./tools/     │  (FileSystemProvider)
-                                   └──────────────┘
-
-노출: ping, weather_get_forecast, api_*, 파일 도구들
-```
-
-**핵심 API**: `mount()` + 다양한 Provider 조합
-
-```python
-from fastmcp import FastMCP
-from fastmcp.server import create_proxy
-from fastmcp.server.providers import FileSystemProvider
-
-main = FastMCP("Aggregator")
-
-# 로컬 도구
-@main.tool
-def ping() -> str:
-    return "pong"
-
-# 다른 FastMCP 서버 마운트
-weather = FastMCP("Weather")
-@weather.tool
-def get_forecast(city: str) -> str:
-    return f"{city}: 맑음"
-
-main.mount(weather, namespace="weather")
-
-# 원격 서버 프록시 마운트
-main.mount(create_proxy("http://api.example.com/mcp"), namespace="api")
-
-# 파일 기반 도구
-main.add_provider(FileSystemProvider("./tools/"))
-
-main.run()
-```
-
-**다중 서버 설정 기반 프록시** (가장 간편한 방법):
-
-```python
-config = {
-    "mcpServers": {
-        "weather": {"url": "https://weather-api.example.com/mcp", "transport": "http"},
-        "calendar": {"url": "https://calendar-api.example.com/mcp", "transport": "http"}
-    }
-}
-composite = create_proxy(config, name="AllServices")
-# 자동 네임스페이싱: weather_*, calendar_*
-```
-
-| 장점 | 단점 |
-|------|------|
-| 클라이언트 설정 극적으로 단순화 | 최저 성능 백엔드에 종속 |
-| 단일 연결로 모든 도구 접근 | 도구 이름 충돌 가능 (네임스페이스로 해결) |
-| 다양한 Provider 유형 혼합 가능 | 복잡한 의존성 관리 |
-
-**적합한 상황**: N-to-1 연결 문제, 팀 온보딩 단순화
-
-→ 예제: [`examples/03_aggregator_pattern.py`](examples/03_aggregator_pattern.py)
-
----
-
-### 패턴 4: 라우터 패턴 — 네임스페이스 기반 암묵적 라우팅
-
-> ✈️ **공항 비유**: **탑승구 구역 번호**. A구역(A1~A20)은 국내선, B구역(B1~B20)은 일본/중국, C구역(C1~C20)은 유럽/미주. 탑승권에 `B12`라고 적혀 있으면 **자동으로 B구역으로 이동** — 별도 안내원 없이 접두사(구역 문자)가 곧 라우팅.
-
-> `namespace_tool` 접두사가 곧 라우팅 키
-
-```
-                    namespace = 라우팅 키
-                    ─────────────────────
-┌──────────┐       ┌─────────────────────────────────┐
-│  Client   │──────▶│           Main Server            │
-│           │       │                                   │
-│ 호출:     │       │  "weather_*" ──▶ Weather Server  │
-│ weather_  │       │  "db_*"      ──▶ DB Server      │
-│ get_      │       │  "git_*"     ──▶ Git Server     │
-│ forecast  │       │                                   │
-└──────────┘       └─────────────────────────────────┘
-```
-
-**암묵적 라우팅**: 별도의 라우터 로직 없이, `mount(server, namespace="...")` 자체가 라우팅
-
-```python
-main = FastMCP("Router")
-main.mount(weather_server, namespace="weather")
-main.mount(db_server, namespace="db")
-main.mount(git_server, namespace="git")
-
-# 클라이언트가 "weather_get_forecast" 호출
-# → 자동으로 weather_server로 라우팅
-```
-
-**고급: 커스텀 Provider로 지능적 라우팅**
-
-```python
-from fastmcp.server.providers import Provider
-from fastmcp.tools import Tool
-
-class SmartRouterProvider(Provider):
-    """쿼리 복잡도에 따라 다른 모델로 라우팅"""
-
-    async def list_tools(self) -> list[Tool]:
-        return [Tool(
-            name="smart_query",
-            description="복잡도 기반 자동 라우팅",
-        )]
-
-    async def get_tool(self, name: str) -> Tool | None:
-        if name == "smart_query":
-            return self._smart_query_tool
-        return None
-```
-
-| 장점 | 단점 |
-|------|------|
-| 추가 코드 없이 네임스페이스로 라우팅 | 복잡한 라우팅 로직은 커스텀 필요 |
-| 비용/성능 최적화 가능 | 네임스페이스 설계가 중요 |
-| 이기종 백엔드 통합 | |
-
-**적합한 상황**: 이기종 백엔드 관리, 비용 최적화 라우팅
-
-→ 예제: [`examples/04_router_pattern.py`](examples/04_router_pattern.py)
-
----
-
-### 패턴 5: 동적 도구 등록 패턴 — Progressive Disclosure
-
-> ✈️ **공항 비유**: **등급별 라운지 접근**. 일반 탑승권으로는 기본 대합실만 이용 가능. 비즈니스 클래스로 업그레이드하면 라운지가 해금되고, 퍼스트 클래스면 전용 게이트+리무진 서비스까지 열린다. 처음부터 모든 시설을 보여주면 복잡하니까, **승객 등급에 따라 점진적으로 서비스를 공개**한다.
-
-> 런타임에 도구를 추가/제거하고, 클라이언트에 알림
-
-```
-┌──────────────────────────────────────────────┐
-│                시간 흐름 →                     │
-│                                               │
-│  [초기]     공개 도구 3개만 노출               │
-│     │                                         │
-│     ▼       사용자가 인증                     │
-│  [인증 후]  admin 도구 5개 추가 노출           │
-│     │       notifications/tools/list_changed  │
-│     ▼                                         │
-│  [필요 시]  search → add-actor → 도구 등록    │
-│             (Apify 마켓플레이스 방식)          │
-└──────────────────────────────────────────────┘
-```
-
-**핵심 메커니즘**: `notifications/tools/list_changed` + 라이브 마운팅
-
-```python
-from fastmcp import FastMCP
-
-api = FastMCP("API")
-
-@api.tool(tags={"public"})
-def public_search(query: str) -> str:
-    """공개 검색"""
-    return f"결과: {query}"
-
-@api.tool(tags={"admin"})
-def admin_delete(record_id: str) -> str:
-    """관리자 전용 삭제"""
-    return f"삭제됨: {record_id}"
-
-# 초기: 공개 도구만
-app = FastMCP("Progressive App")
-app.mount(api)
-app.enable(tags={"public"}, only=True)
-
-# 인증 후 → admin 도구 동적 노출
-# 라이브 마운팅: 마운트 후 추가된 도구도 즉시 접근 가능
-@dynamic_server.tool
-def added_later() -> str:
-    return "마운트 이후 추가됨!"
-```
-
-| 장점 | 단점 |
-|------|------|
-| 컨텍스트 윈도우 절약 | 클라이언트 지원 격차 |
-| 필요한 도구만 점진적 노출 | 구현 복잡도 |
-| 대규모 카탈로그 관리 | |
-
-**적합한 상황**: 10,000+ 도구 카탈로그, 권한별 점진적 노출
-
-**실제 사례**: Apify 마켓플레이스 (`search-actors` → `add-actor` → `list_changed`)
-
-→ 예제: [`examples/05_dynamic_tools.py`](examples/05_dynamic_tools.py)
-
----
-
-## 4. 패턴별 비교표
-
-| 패턴 | 핵심 목적 | FastMCP API | 최대 장점 | 최대 단점 | 적합 상황 |
-|------|-----------|-------------|-----------|-----------|-----------|
-| **프록시** | 단일 백엔드 포워딩 | `create_proxy()` | 트랜스포트 브리징 투명성 | 지연 시간 (300-500ms) | 원격 서버 로컬 노출 |
-| **게이트웨이** | 보안/정책 진입점 | `mount()` + 미들웨어 | 횡단 관심사 중앙 집중 | 단일 장애점 | 프로덕션 다중 서비스 |
-| **애그리게이터** | 다중 서버 통합 | `mount()` / `import_server()` | 클라이언트 설정 단순화 | 최저 성능에 종속 | N-to-1 연결 문제 |
-| **라우터** | 지능적 요청 분배 | 네임스페이스 암묵적 | 비용/성능 최적화 | 라우팅 로직 복잡 | 이기종 백엔드 |
-| **동적 등록** | 런타임 도구 발견 | `list_changed` 알림 | 컨텍스트 윈도우 절약 | 클라이언트 지원 격차 | 대규모 카탈로그 |
-
-### mount() vs import_server() 비교
+### mount() vs import_server()
 
 | 특성 | `mount()` | `import_server()` |
 |------|-----------|-------------------|
-| 링크 유형 | 라이브 (동적) | 일회성 복사 (정적) |
-| 업데이트 반영 | 즉시 | 반영 안 됨 |
-| 성능 | 런타임 위임 (느림) | 빠름 — 위임 없음 |
-| 용도 | 모듈형 런타임 조합 | 확정된 컴포넌트 번들링 |
+| 링크 | 라이브 (동적) | 일회성 복사 (정적) |
+| 업데이트 | 즉시 반영 | 반영 안 됨 |
+| 용도 | 런타임 조합 | 확정된 번들링 |
 
-### 내장 Provider 유형
+### 내장 Transform 종류
 
-| Provider | 소스 | 용도 |
-|----------|------|------|
-| **LocalProvider** | `@tool` 데코레이터 | 기본 도구 등록 |
-| **FastMCPProvider** | 다른 FastMCP 인스턴스 | 서버 조합/마운팅 |
-| **ProxyProvider** | 원격 MCP 서버 | 원격 서버 프록싱 |
-| **FileSystemProvider** | 파일 디렉토리 | 핫리로드 개발 |
-| **OpenAPIProvider** | OpenAPI 스펙 | REST API 자동 변환 |
-| **SkillsProvider** | 스킬 파일 | 스킬 리소스 제공 |
+| Transform | 역할 | 예시 |
+|-----------|------|------|
+| `Namespace` | 접두사 추가 | `tool` → `api_tool` |
+| `Visibility` | 도구 숨김/노출 | `disable(tags={"admin"})` |
+| `ToolTransform` | 이름/설명 변형 | 긴 이름을 짧게 |
+| `VersionFilter` | 버전별 필터링 | v1/v2 동시 운영 |
+| 커스텀 | 비즈니스 로직 | 태그 기반 필터 등 |
 
----
-
-## 5. Transform 시스템 상세
-
-### 네임스페이싱 규칙
-
-| 컴포넌트 유형 | 원본 | `namespace="api"` 적용 후 |
-|---------------|------|---------------------------|
-| Tool | `my_tool` | `api_my_tool` |
-| Prompt | `my_prompt` | `api_my_prompt` |
-| Resource | `data://info` | `data://api/info` |
-| Template | `data://{id}` | `data://api/{id}` |
-
-### Transform 스태킹 (체이닝)
-
-```python
-from fastmcp.server.transforms import Namespace, ToolTransform
-from fastmcp.tools.tool_transform import ToolTransformConfig
-from fastmcp.server.providers import FastMCPProvider
-
-provider = FastMCPProvider(sub_server)
-
-# 1단계: 네임스페이싱
-provider.add_transform(Namespace("api"))
-
-# 2단계: 이름 재정의
-provider.add_transform(ToolTransform({
-    "api_verbose_auto_generated_name": ToolTransformConfig(
-        name="short",
-        description="에이전트에게 더 적합한 설명",
-        tags={"optimized"},
-    ),
-}))
-
-# 흐름: "verbose_auto_generated_name" → "api_verbose_auto_generated_name" → "short"
-```
-
-### Visibility (enable/disable)
-
-```python
-server = FastMCP("Server")
-
-# 태그 기반 필터링
-server.disable(tags={"internal"})          # internal 태그 숨기기
-server.enable(tags={"public"}, only=True)  # public만 노출 (화이트리스트)
-```
-
-### VersionFilter
-
-```python
-from fastmcp.server.transforms import VersionFilter
-
-api_v1 = FastMCP("API v1", providers=[components])
-api_v1.add_transform(VersionFilter(version_lt="2.0"))   # 2.0 미만
-
-api_v2 = FastMCP("API v2", providers=[components])
-api_v2.add_transform(VersionFilter(version_gte="2.0"))  # 2.0 이상
-```
-
-### 커스텀 Transform 작성
-
-```python
-from fastmcp.server.transforms import Transform, GetToolNext
-from fastmcp.tools import Tool
-from collections.abc import Sequence
-
-class TagFilter(Transform):
-    """특정 태그를 가진 도구만 통과시키는 커스텀 Transform"""
-
-    def __init__(self, required_tags: set[str]):
-        self.required_tags = required_tags
-
-    async def list_tools(self, tools: Sequence[Tool]) -> Sequence[Tool]:
-        return [t for t in tools if t.tags & self.required_tags]
-
-    async def get_tool(self, name: str, call_next: GetToolNext) -> Tool | None:
-        tool = await call_next(name)
-        return tool if tool and tool.tags & self.required_tags else None
-```
-
-### Provider-level vs Server-level
-
-```
-Provider-level Transform              Server-level Transform
-─────────────────────                  ─────────────────────
-• 해당 Provider 컴포넌트에만 적용       • 모든 컴포넌트에 적용
-• provider.add_transform()             • server.add_transform()
-• 네임스페이싱, 이름 재정의 등          • 전역 필터링, 인증 등
-```
-
-→ 예제: [`examples/06_transforms.py`](examples/06_transforms.py)
+→ 상세 코드: [`examples/06_transforms.py`](examples/06_transforms.py)
 
 ---
 
