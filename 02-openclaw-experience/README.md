@@ -18,51 +18,52 @@
 
 ---
 
-## 1. 요즘 핫한 그 기술, 대체 뭐가 다른 걸까?
+## 1. OpenClaw — 요즘 핫한 그 기술, 대체 뭐길래?
 
-### AI Agent. 너무 많이 들었습니다.
+### 너무 많이 들었습니다.
 
-요즘 어디를 가든 "AI Agent"라는 말이 나옵니다.
+요즘 AI 커뮤니티에서 가장 핫한 이름 중 하나, **OpenClaw**.
 
-- "Agent가 알아서 코딩해준대"
-- "Agent가 이메일도 보내준대"
-- "Agent가 서버 관리도 해준대"
+> *"Setup @openclaw yesterday. All I have to say is, wow. It's the fact that claw can just keep building upon itself just by talking to it in Discord is crazy. The future is already here."*
+> — @jonahships_
 
-**소문에는 뭐든 한다고 하는데... 정말인가요?**
+> *"I've been saying for like six months that even if LLMs suddenly stopped improving, we could spend years discovering new transformative uses. @openclaw feels like that kind of 'just had to glue all the parts together' leap forward."*
+> — @markjaquith
 
-### 기존 LLM과 뭐가 다른 걸까?
+> *"A smart model with eyes and hands at a desk with keyboard and mouse. You message it like a coworker and it does everything a person could do with that Mac mini. That's what you have now."*
+> — @nathancla
 
-우리가 쓰는 ChatGPT, Claude, Gemini는 **대화**만 합니다.
+**소문에는 뭐든 한다고 하는데... 기존에 쓰던 것들과 대체 뭐가 다른 걸까요?**
 
-```
-나: "이메일 확인해줘"
-AI: "저는 이메일에 접근할 수 없습니다 😊"
+### 우리가 쓰는 ChatGPT, Claude Desktop과 뭐가 다른가?
 
-나: "서버 상태 좀 봐줘"
-AI: "저는 서버에 접근할 권한이 없습니다 😊"
+솔직히 ChatGPT도 있고, Claude Desktop도 있고, Copilot도 있잖아요.
+근데 **왜 OpenClaw이 따로 필요한 걸까요?**
 
-나: "이 파일 정리해줘"
-AI: "저는 파일 시스템에 접근할 수 없습니다 😊"
-```
+| 기능 | ChatGPT / Claude 웹 | Claude Desktop / Copilot | **OpenClaw** |
+|------|---------------------|--------------------------|-------------|
+| 대화 | ✅ | ✅ | ✅ |
+| 코드 생성 | ✅ | ✅ | ✅ |
+| 파일 읽기/쓰기 | ❌ | ✅ (제한적) | ✅ 전체 |
+| 셸 명령 실행 | ❌ | ⚠️ 일부 | ✅ 전체 |
+| 메신저 연동 | ❌ | ❌ | ✅ Slack/Discord/Telegram |
+| 영구 메모리 | ⚠️ 제한적 | ❌ | ✅ 세션 간 기억 유지 |
+| 자동 실행 (Cron) | ❌ | ❌ | ✅ 밤에 혼자 일함 |
+| 주도적 알림 | ❌ | ❌ | ✅ 먼저 알려줌 |
+| 서브에이전트 | ❌ | ❌ | ✅ 병렬 작업 |
+| 24/7 상시 운영 | ❌ | ❌ | ✅ |
+| 오픈소스 | ❌ | ❌ | ✅ |
 
-**"접근할 수 없습니다"의 향연.**
+> Reddit에서도 이렇게 비교합니다:
+> *"Claude Code는 작업마다 지시해야 합니다. OpenClaw은 자체 드라이버가 있어서 가이드라인에 따라 스스로 깨어나서 일합니다."*
 
-> 🏠 비유하면, 아무리 똑똑한 비서를 고용했는데
-> **전화기 앞에만 묶어놓은 격**입니다.
-> "커피 사와" → "저는 의자에서 일어날 수 없습니다" 😊
+**핵심 차이는 3가지입니다:**
 
-### LLM vs AI Agent — 핵심 차이
+1. **상시 운영**: ChatGPT는 브라우저 닫으면 끝. OpenClaw은 **24시간 돌아가면서** Slack으로 소통
+2. **기억**: Claude Desktop은 세션 끝나면 잊어버림. OpenClaw은 **어제 뭐 했는지 기억**
+3. **자율 행동**: 기존 도구는 물어봐야 대답. OpenClaw은 **Cron/Heartbeat로 알아서 일함**
 
-| 능력 | 기존 LLM (ChatGPT 등) | AI Agent (OpenClaw) |
-|------|----------------------|---------------------|
-| 대화 | ✅ 잘함 | ✅ 당연히 |
-| 도구 사용 | ❌ 불가 | ✅ 셸, API, 파일, 브라우저... |
-| 기억 | ⚠️ 대화 내에서만 | ✅ 어제 뭐 했는지 기억 |
-| 자동화 | ❌ 불가 | ✅ 매일 아침 자동 리포트 |
-| 주도적 행동 | ❌ 물어봐야 대답 | ✅ 중요한 건 먼저 알려줌 |
-| 메신저 연동 | ❌ 웹에서만 | ✅ Slack/Discord/Telegram |
-
-> 💡 **한 줄 요약**: LLM은 **"말하는 AI"**, Agent는 **"일하는 AI"**입니다.
+> 💡 **한 줄 요약**: 기존 도구는 **"내가 쓰는 AI"**, OpenClaw은 **"같이 일하는 AI 동료"**입니다.
 
 ---
 
@@ -70,9 +71,9 @@ AI: "저는 파일 시스템에 접근할 수 없습니다 😊"
 
 ### 두괄식으로 말씀드리겠습니다.
 
-**"키만 주고 테스트하라 하면, 바로 테스트를 진행합니다."**
+**결론: 진짜로 됩니다.**
 
-기존에 환경을 연결하거나 오픈소스를 세팅할 때는?
+일반적으로 환경을 연결하고 오픈소스를 세팅할 때, 직접 클론하고 빌드하고 테스트하잖아요.
 
 ```
 [Before — 직접 올리고 테스트]
@@ -88,10 +89,10 @@ AI: "저는 파일 시스템에 접근할 수 없습니다 😊"
 → 반나절~하루 소요 😤
 ```
 
-OpenClaw에서는?
+**이제는 키만 주고 "테스트해봐" 하면, 바로 테스트를 진행합니다.**
 
 ```
-[After — Agent에게 시키기]
+[After — OpenClaw에게 시키기]
 
 나: "이 오픈소스 설치하고 테스트해봐"
 AI: (git clone → 환경 세팅 → 빌드 → 기동 → 테스트)
@@ -102,12 +103,13 @@ AI: (git clone → 환경 세팅 → 빌드 → 기동 → 테스트)
 → 내가 한 일: 시키기 🎉
 ```
 
-### 🎬 실제 영상으로 보여드리겠습니다
+LLM이 개발한 코드를 직접 기동하고 테스트한 것도 OpenClaw이 했습니다.
+
+### 🎬 영상으로 보여드리겠습니다
 
 > **[데모 영상: demo.mp4]**
-> 
-> LLM이 개발한 코드를 직접 기동하고 테스트한 과정입니다.
-> "테스트해보고 영상 달라"고 하면, Slack으로 영상을 받아볼 수 있습니다.
+
+"테스트해보고 영상 달라" 하면, **Slack으로 영상을 받아볼 수 있습니다.**
 
 ```
 나: "대시보드 화면 녹화해서 보여줘"
@@ -119,7 +121,8 @@ AI: (Next.js 빌드 → 서버 기동 → Playwright로 브라우저 녹화)
     → Slack에 demo.mp4 파일 전달
 ```
 
-이게 진짜입니다. AI한테 "녹화해줘"라고 했더니 **진짜로 녹화해서 보내줍니다.**
+AI한테 "녹화해줘"라고 했더니 **진짜로 녹화해서 Slack으로 보내줍니다.**
+이 영상이 바로 그 결과물입니다.
 
 ### 바이브 코딩, 그 이상
 
